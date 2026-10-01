@@ -53,42 +53,55 @@ erDiagram
     }
 ```
 
-## RAG (Retrieval-Augmented Generation) Akış Diyagramı
-
 ```mermaid
-flowchart TD
-    %% Alt Süreç 1: Veri Hazırlama ve İndeksleme
-    subgraph INDEXING["1. Veri Hazırlama & İndeksleme (Offline / Batch Süreci)"]
-        A[Kaggle / UCI Servis Masası Bilet Verisi] --> B[Veri Temizleme & Ön İşleme]
-        B --> C[Metin Parçalama / Chunking]
-        C --> D[OpenAI text-embedding-3-small]
-        D -->|Vektör + Metin| E[(PostgreSQL / pgvector)]
+flowchart TB
+    %% 1. ve 2. Süreçleri İçeren Üst Katman
+    subgraph TOP_ROW [" "]
+        direction LR
+
+        %% 1. Süreç: Veri Hazırlama & İndeksleme
+        subgraph INDEXING ["1. Veri Hazırlama & İndeksleme (Batch Süreci)"]
+            direction TB
+            A[Kaggle / UCI Servis Masası Verisi] --> B[Veri Temizleme & Ön İşleme]
+            B --> C[Metin Parçalama / Chunking]
+            C --> D[OpenAI text-embedding-3-small]
+            D -->|Vektör + Metin| E[(PostgreSQL / pgvector)]
+        end
+
+        %% İki kutunun yan yana durmasını zorlayan görünmez bağ
+        INDEXING ~~~ QUERY
+
+        %% 2. Süreç: Soru & Arama
+        subgraph QUERY ["2. Kullanıcı Sorgusu & Vektör Arama (Online Süreç)"]
+            direction TB
+            U[Kullanıcı Sorusu] --> F[OpenAI Embedding Modeli]
+            F -->|Soru Vektörü| G{Benzerlik Araması}
+            G -->|En Benzer Kayıtlar| H[Bağlam / Context]
+        end
     end
 
-    %% Alt Süreç 2: Canlı Soru ve Arama Süreci
-    subgraph QUERY["2. Kullanıcı Sorgusu & Vektör Arama (Online Süreç)"]
-        U[Kullanıcı Sorusu] --> F[OpenAI Embedding Modeli]
-        F -->|Soru Vektörü| G{Kosinüs Benzerlik Araması}
-        E -.->|Vektör Karşılaştırması| G
-        G -->|En Benzer 3-5 Bilet Kaydı| H[Bağlam / Context]
-    end
+    %% Veritabanı ve Benzerlik Araması Bağlantısı
+    E -.->|Vektör Karşılaştırma| G
 
-    %% Alt Süreç 3: Yanıt Üretimi ve Çıktı
-    subgraph GENERATION["3. LLM Yanıt Üretimi & Sunum"]
+    %% 3. Süreç: Yanıt Üretimi (Alt Katman)
+    subgraph GENERATION ["3. LLM Yanıt Üretimi & Sunum"]
+        direction TB
         SP[Sistem Promptu: Windows/Oracle Uzmanı] --> I[Prompt Birleştirici]
-        H --> I
-        U --> I
-        CH[Geçmiş Sohbet Hafızası / History] --> I
+        CH[Sohbet Hafızası / History] --> I
         I -->|Zenginleştirilmiş İstek| J[LLM: OpenAI GPT-4o-mini]
         J --> K[Markdown / Kod Bloklu Yanıt]
         K --> L[Kullanıcı Arayüzü / Chat Dashboard]
     end
 
+    %% Üst Katmandan Alt Katmana Akışlar
+    H --> I
+    U --> I
+
     %% Stiller
-    classDef process fill:#f9f9f9,stroke:#333,stroke-width:1px;
+    style TOP_ROW fill:none,stroke:none
     classDef db fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
     classDef llm fill:#ede7f6,stroke:#512da8,stroke-width:2px;
-    
+
     class E db;
     class D,F,J llm;
 ```
