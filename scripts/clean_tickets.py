@@ -1,11 +1,4 @@
-"""
-01_clean_tickets.py
-Kaggle "Multilingual Customer Support Tickets" verisini RAG için hazırlar.
 
-Kullanım (proje klasöründen):
-    python 01_clean_tickets.py
-    python 01_clean_tickets.py --input data/baska_dosya.csv --output data/tickets_clean.csv
-"""
 import argparse
 import re
 
