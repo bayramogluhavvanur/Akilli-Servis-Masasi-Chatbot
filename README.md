@@ -52,42 +52,45 @@ erDiagram
         timestamp created_at
     }
 ```
-## RAG (Retrieval-Augmented Generation) Akış Diyagramı
-
 ```mermaid
-flowchart TD
-    %% Alt Süreç 1: Veri Hazırlama ve İndeksleme
-    subgraph INDEXING["1. Veri Hazırlama & İndeksleme (Offline / Batch Süreci)"]
+flowchart TB
+    %% 1. ve 2. Süreç: Yan Yana Üst Bloklar
+    subgraph S1 ["1. Veri Hazırlama & İndeksleme (Batch Süreci)"]
         A[Kaggle / UCI Servis Masası Bilet Verisi] --> B[Veri Temizleme & Ön İşleme]
         B --> C[Metin Parçalama / Chunking]
         C --> D[OpenAI text-embedding-3-small]
         D -->|Vektör + Metin| E[(PostgreSQL / pgvector)]
     end
 
-    %% Alt Süreç 2: Canlı Soru ve Arama Süreci
-    subgraph QUERY["2. Kullanıcı Sorgusu & Vektör Arama (Online Süreç)"]
+    subgraph S2 ["2. Kullanıcı Sorgusu & Vektör Arama (Online Süreç)"]
         U[Kullanıcı Sorusu] --> F[OpenAI Embedding Modeli]
         F -->|Soru Vektörü| G{Kosinüs Benzerlik Araması}
-        E -.->|Vektör Karşılaştırması| G
         G -->|En Benzer 3-5 Bilet Kaydı| H[Bağlam / Context]
     end
 
-    %% Alt Süreç 3: Yanıt Üretimi ve Çıktı
-    subgraph GENERATION["3. LLM Yanıt Üretimi & Sunum"]
+    %% S1 ve S2'nin yan yana durmasını sağlayan görünmez yatay bağ
+    S1 ~~~ S2
+
+    %% 1 ve 2 arasındaki dinamik veri köprüsü
+    E -.->|Vektör Karşılaştırması| G
+
+    %% 3. Süreç: Alt Katman (Yanıt Üretimi)
+    subgraph S3 ["3. LLM Yanıt Üretimi & Sunum"]
         SP[Sistem Promptu: Windows/Oracle Uzmanı] --> I[Prompt Birleştirici]
-        H --> I
-        U --> I
         CH[Geçmiş Sohbet Hafızası / History] --> I
         I -->|Zenginleştirilmiş İstek| J[LLM: OpenAI GPT-4o-mini]
         J --> K[Markdown / Kod Bloklu Yanıt]
         K --> L[Kullanıcı Arayüzü / Chat Dashboard]
     end
 
-    %% Stiller
-    classDef process fill:#f9f9f9,stroke:#333,stroke-width:1px;
+    %% Üst Süreçlerden Alt Süreçteki Prompt Birleştiriciye Giden Orijinal Bağlantılar
+    H --> I
+    U --> I
+
+    %% Görsel Stiller
     classDef db fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
     classDef llm fill:#ede7f6,stroke:#512da8,stroke-width:2px;
-    
+
     class E db;
     class D,F,J llm;
 ```
