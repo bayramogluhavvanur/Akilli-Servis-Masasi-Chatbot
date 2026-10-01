@@ -1,6 +1,7 @@
 # Akıllı Servis Masası Chatbot
 
 #ER DİYAGRAMI
+
 ```mermaid
 erDiagram
     USERS ||--o{ CHAT_SESSIONS : "owns"
