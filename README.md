@@ -56,15 +56,15 @@ erDiagram
 flowchart TB
     %% 1. ve 2. Süreç: Yan Yana Üst Bloklar
     subgraph S1 ["1. Veri Hazırlama & İndeksleme (Batch Süreci)"]
-        A[Kaggle / UCI Servis Masası Bilet Verisi] --> B[Veri Temizleme & Ön İşleme]
+        A[Kaggle / UCI Servis Masası ve Stack Excahange Bilet Verisi] --> B[Veri Temizleme & Ön İşleme]
         B --> C[Metin Parçalama / Chunking]
-        C --> D[OpenAI text-embedding-3-small]
+        C --> D[HuggingFace multilingual-e5-base]
         D -->|Vektör + Metin| E[(PostgreSQL / pgvector)]
     end
 
     subgraph S2 ["2. Kullanıcı Sorgusu & Vektör Arama (Online Süreç)"]
-        U[Kullanıcı Sorusu] --> F[OpenAI Embedding Modeli]
-        F -->|Soru Vektörü| G{Kosinüs Benzerlik Araması}
+        U[Kullanıcı Sorusu] --> F[HuggingFace Embedding Modeli]
+        F -->|Soru Vektörü| G{Benzerlik Araması}
         G -->|En Benzer 3-5 Bilet Kaydı| H[Bağlam / Context]
     end
 
@@ -78,7 +78,7 @@ flowchart TB
     subgraph S3 ["3. LLM Yanıt Üretimi & Sunum"]
         SP[Sistem Promptu: Windows/Oracle Uzmanı] --> I[Prompt Birleştirici]
         CH[Geçmiş Sohbet Hafızası / History] --> I
-        I -->|Zenginleştirilmiş İstek| J[LLM: OpenAI GPT-4o-mini]
+        I -->|Zenginleştirilmiş İstek| J[LLM: Gemini 1.5 Flash]
         J --> K[Markdown / Kod Bloklu Yanıt]
         K --> L[Kullanıcı Arayüzü / Chat Dashboard]
     end
@@ -94,68 +94,3 @@ flowchart TB
     class E db;
     class D,F,J llm;
 ```
-
-```mermaid
-flowchart TB
-  subgraph HAZIRLIK["1. Veri hazırlama (bir kez ve Bilgi Merkezi yüklemesinde)"]
-    K1["Kaggle ticket verisi (CSV)"]
-    K2["Stack Exchange alt kümesi"]
-    K3["Admin: Bilgi Merkezi dosya yükleme"]
-    T["Temizle: HTML, yer tutucu, tekrar"]
-    CH["Chunk'la"]
-    EM["Embedding: multilingual-e5-base (passage: öneki)"]
-    K1 --> T
-    K2 --> T
-    K3 --> T
-    T --> CH --> EM
-  end
-
-  subgraph PGS["PostgreSQL (vektör deposu)"]
-    PG[("document_chunks: metin + embedding")]
-  end
-
-  subgraph MSS["MSSQL (kullanıcı yönetimi ve loglama)"]
-    USERS[("Users")]
-    KD[("KnowledgeDocuments")]
-    SESS[("ChatSessions, Messages, MessageSources")]
-    FB[("Feedbacks")]
-    AUD[("AuditLogs")]
-  end
-
-  subgraph SORU["2. Soru-cevap (her soruda)"]
-    U["Kullanıcı: Streamlit chat"]
-    API["FastAPI: JWT doğrulama"]
-    MODE["Uzman modu: Genel, Windows Server, Oracle DB"]
-    QE["Soru embedding: e5 (query: öneki)"]
-    SR["Benzerlik araması: top-k"]
-    PR["Prompt: sistem prompt + bağlam + sohbet geçmişi + soru"]
-    LLM["LLM: OpenAI küçük model"]
-    ANS["Cevap: Markdown, kod bloğu, kaynak bağlantısı"]
-    SHOW["Ekranda gösterilir"]
-    U --> API --> MODE --> QE --> SR --> PR --> LLM --> ANS --> SHOW
-  end
-
-  subgraph YONETIM["3. Geri bildirim ve yönetim"]
-    PUAN["Kullanıcı cevabı puanlar"]
-    ADM["Admin paneli: en çok sorulanlar, başarı oranı"]
-  end
-
-  EM -->|"vektör + metin"| PG
-  K3 -->|"dosya kaydı (document_id)"| KD
-  KD -.->|"aynı document_id ile senkron"| PG
-  PG -->|"benzer parçalar"| SR
-  API <-->|"kullanıcı ve rol"| USERS
-  API -.->|"giriş ve hata kaydı"| AUD
-  SESS -->|"son mesajlar"| PR
-  ANS -->|"mesaj + kullanılan parçalar"| SESS
-  SHOW --> PUAN
-  PUAN -->|"puan"| FB
-  FB --> ADM
-  SESS --> ADM
-
-  classDef proc fill:#EEEDFE,stroke:#534AB7,color:#26215C
-  classDef db fill:#E1F5EE,stroke:#0F6E56,color:#04342C
-  class K1,K2,K3,T,CH,EM,U,API,MODE,QE,SR,PR,LLM,ANS,SHOW,PUAN,ADM proc
-  class PG,USERS,KD,SESS,FB,AUD db
-
-  ```
