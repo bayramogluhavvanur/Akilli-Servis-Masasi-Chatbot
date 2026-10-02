@@ -52,6 +52,8 @@ erDiagram
         timestamp created_at
     }
 ```
+
+# RAG DİYAGRAMI
 ```mermaid
 flowchart TB
     %% 1. ve 2. Süreç: Yan Yana Üst Bloklar
