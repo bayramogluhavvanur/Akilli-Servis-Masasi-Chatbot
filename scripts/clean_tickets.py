@@ -24,7 +24,7 @@ def clean_text(value: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="data/aa_dataset-tickets-multi-lang-5-2-50-version.csv")
-    parser.add_argument("--output", default="data/tickets_clean.csv")
+    parser.add_argument("--output", default="data/tickets.csv")
     args = parser.parse_args()
 
     df = pd.read_csv(args.input)
