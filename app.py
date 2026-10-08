@@ -91,8 +91,8 @@ if not st.session_state.authenticated:
   st.stop()     
 
 # --- 2. ANA SOHBET VE GEÇMİŞ SOHBETLER PANELİ ---
-user = st.session_state.user_info
-is_admin = user["role"].lower() == "admin"
+user = st.session_state.get("user_info") or {}
+is_admin = str(user.get("role", "user")).lower() == "admin"
 
 with st.sidebar:
     st.header(f"👤 {user['full_name']}")
@@ -219,6 +219,7 @@ chat_input_val = st.chat_input("Sorunuzu yazın...")
 
 # Yeniden Sor butonuna basıldıysa veya yeni mesaj yazıldıysa prompt_to_use belirlenir
 prompt_to_use = None
+sources = []
 
 if chat_input_val:
   prompt_to_use = chat_input_val
@@ -231,9 +232,14 @@ elif st.session_state.get("retry_prompt"):
 if prompt_to_use:
   # 1. Kullanıcı mesajını arayüze ve veritabanına ekle
   st.session_state.messages.append({"role": "user", "content": prompt_to_use})
-  db_mssql.add_message_to_session(
-      st.session_state.session_id, "user", prompt_to_use
-  )
+
+  db_mssql.log_message(
+    session_id=st.session_state.session_id,
+    role="user",
+    content=prompt_to_use,
+    sources=None,
+    score=None,
+)
 
   # İlk mesajsa sohbet başlığını güncelle
   if len(st.session_state.messages) == 1:
@@ -246,78 +252,68 @@ if prompt_to_use:
   # 2. Asistan yanıtını üret
   with st.chat_message("assistant"):
     with st.spinner("Bilgi bankası taranıyor ve yanıt hazırlanıyor..."):
-    try:
-    response_text, relevant_docs = generate_helpdesk_response(prompt_to_use)
+      try:
+        # 2 değişkeni de güvenle karşılıyoruz
+        response_text, relevant_docs = generate_helpdesk_response(
+            prompt_to_use
+        )
 
-    st.markdown(response_text)
+        st.markdown(response_text)
 
-    # Eğer kaynakları göstermek isterseniz (opsiyonel):
-    if relevant_docs:
-        with st.expander("📚 Kullanılan RAG Referans Dokümanları"):
-        for doc in relevant_docs:
-            # doc yapınıza göre: (source, category, subject, answer, sim)
-            st.write(
-                f"**Kaynak:** {doc[0]} | **Kategori:** {doc[1]} | **Skor:**"
-                f" {doc[4]:.4f}"
-            )
+        # İsteğe bağlı: RAG kaynaklarını göster
+        if relevant_docs:
+          with st.expander("📚 Kullanılan Referans Dokümanlar"):
+            for doc in relevant_docs:
+              st.write(
+                  f"- **Kaynak:** {doc[0]} | **Kategori:** {doc[1]} | **Skor:**"
+                  f" {doc[4]:.4f}"
+              )
 
-    # Asistan yanıtını kaydet
-    st.session_state.messages.append(
-        {"role": "assistant", "content": response_text}
-    )
-    db_mssql.add_message_to_session(
-        st.session_state.session_id, "assistant", response_text
-    )
+        # Yanıtı kaydet
+        st.session_state.messages.append(
+            {"role": "assistant", "content": response_text}
+        )
+        top_score = (
+            float(sources[0][4]) if sources and len(sources[0]) >= 5 else None
+        )
+        db_mssql.log_message(
+            session_id=st.session_state.session_id,
+            role="assistant",
+            content=response_text,
+            sources=sources,
+            score=top_score
+            
+        )
 
-    st.session_state.last_error = None
+        st.session_state.last_error = None
 
-    except Exception as e:
-    st.session_state.retry_prompt = prompt_to_use
-    st.session_state.last_error = str(e)
-    st.error("❌ Yanıt oluşturulurken bir hata oluştu.")
-    st.error(f"🔍 Hata Detayı: {e}")
+      except Exception as e:
+        st.session_state.retry_prompt = prompt_to_use
+        st.session_state.last_error = str(e)
 
-        if st.button("🔄 Yeniden Sor", use_container_width=True):
+        st.error("❌ Yanıt oluşturulurken bir hata oluştu.")
+        st.error(f"🔍 Hata Detayı: {e}")
+
+        if st.button("🔄 Yeniden Sor",width="stretch"):
           st.rerun()
-
         # Cevabı ve kullanılan kaynakları göster
         st.markdown(response_text)
 
         if sources:
           with st.expander("📚 Kullanılan Kaynaklar"):
             for source in sources:
-              if (
-                  isinstance(source, (list, tuple))
-                  and len(source) >= 5
-              ):
-                src, cat, subj, ans, sim = source[:5]
-                st.markdown(
-                    f"**Kaynak:** `{src}` | **Kategori:** `{cat}` |"
-                    f" **Benzerlik:** `%{float(sim)*100:.1f}`"
-                )
-              else:
-                st.markdown(str(source))
-
-        # Başarılı yanıtı kaydediyoruz
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": response_text,
-            "sources": sources,
-        })
-
-        top_score = (
-            float(sources[0][4])
-            if sources and len(sources[0]) >= 5
-            else None
-        )
-        db_mssql.log_message(
-            st.session_state.session_id,
-            "assistant",
-            response_text,
-            sources=sources,
-            score=top_score,
-        )
-
+              if sources:
+                with st.expander("📚 Kullanılan Kaynaklar"):
+                    for source in sources:
+                     if isinstance(source, (list, tuple)) and len(source) >= 5:
+                        src, cat, subj, ans, sim = source[:5]
+                        st.markdown(
+                            f"**Kaynak:** `{src}` | **Kategori:** `{cat}` |"
+                            f" **Benzerlik:** `%{float(sim)*100:.1f}`"
+                        )
+                     else:
+                      st.markdown(str(source))
+                      
       except Exception as e:
         # HATA DURUMUNDA SORUYU RETRY DÜĞMESİ İÇİN HAFIZADA TUT
         st.session_state.retry_prompt = active_prompt

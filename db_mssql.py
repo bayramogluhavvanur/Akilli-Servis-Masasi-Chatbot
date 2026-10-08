@@ -165,11 +165,13 @@ def create_chat_session(user_id, title="Yeni Destek Talebi"):
             conn.close()
 
 
-def log_message(session_id, sender, text, sources=None, score=None):
+def log_message(session_id, role, content, sources=None, score=None):
     """Mesajları veritabanına kaydeder."""
     if not session_id:
         return
 
+    if not content or str(content).strip() == "":
+        content = "[Boş Mesaj]"
     conn = None
     try:
         sources_json = None
@@ -194,7 +196,8 @@ def log_message(session_id, sender, text, sources=None, score=None):
             INSERT INTO ChatMessages (session_id, sender, message_text, retrieved_sources, similarity_score)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (session_id, sender, text, sources_json, score),
+            (session_id, 
+             role, content, sources_json, score),
         )
         conn.commit()
         cursor.close()

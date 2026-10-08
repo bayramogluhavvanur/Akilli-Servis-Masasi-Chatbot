@@ -117,49 +117,52 @@ def generate_chat_title(first_message: str) -> str:
 # ============================================================
 
 def generate_helpdesk_response(user_query: str):
-    relevant_docs = retrieve_relevant_tickets(user_query, top_k=5)
+  relevant_docs = retrieve_relevant_tickets(user_query, top_k=5)
 
-    if not relevant_docs:
-     return (
-      "Bilgi bankasında bu konuyla ilgili eşleşen bir kayıt bulunamadı.",
-      [],
-     )
-    return response_text, relevant_docs
-    # Ağırlıklı kategoriyi tespit edip uzman personasını belirliyoruz
-    categories = [row[1] for row in relevant_docs]  # row[1] -> category
-    is_oracle = any("Oracle" in str(c) for c in categories)
-    is_windows = any("Windows" in str(c) for c in categories)
+  if not relevant_docs:
+    return (
+        "Bilgi bankasında bu konuyla ilgili eşleşen bir kayıt bulunamadı.",
+        [],
+    )
 
-    if is_oracle:
-        persona_directive = (
-            "ROL: Sen Kıdemli bir Oracle DBA'sin. Yanıtında mutlaka uygulanabilir "
-            "SQL sorguları, Tablespace yönetim komutları veya RMAN kod blokları sun."
-        )
-    elif is_windows:
-        persona_directive = (
-            "ROL: Sen Kıdemli bir Windows Server Uzmanısın (Active Directory, IIS, "
-            "Event Log). Yanıtında mutlaka net PowerShell komutları veya cmd blokları sun."
-        )
-    else:
-        persona_directive = (
-            "ROL: Sen Kurumsal BT Servis Masası Asistanısın. Çözüm adımlarını net "
-            "ve teknik olarak sırala."
-        )
+  # Ağırlıklı kategoriyi tespit edip uzman personasını belirliyoruz
+  categories = [row[1] for row in relevant_docs]  # row[1] -> category
+  is_oracle = any("Oracle" in str(c) for c in categories)
+  is_windows = any("Windows" in str(c) for c in categories)
 
-    context_blocks = []
-    for idx, (source, category, subject, answer, sim) in enumerate(relevant_docs, 1):
-        context_blocks.append(
-            f"--- Referans Doküman {idx} ---\n"
-            f"Kaynak: {source}\n"
-            f"Kategori: {category}\n"
-            f"Konu: {subject}\n"
-            f"Çözüm/Cevap: {answer}\n"
-            f"Benzerlik: {sim:.4f}\n"
-        )
+  if is_oracle:
+    persona_directive = (
+        "ROL: Sen Kıdemli bir Oracle DBA'sin. Yanıtında mutlaka uygulanabilir "
+        "SQL sorguları, Tablespace yönetim komutları veya RMAN kod blokları sun."
+    )
+  elif is_windows:
+    persona_directive = (
+        "ROL: Sen Kıdemli bir Windows Server Uzmanısın (Active Directory, IIS, "
+        "Event Log). Yanıtında mutlaka net PowerShell komutları veya cmd"
+        " blokları sun."
+    )
+  else:
+    persona_directive = (
+        "ROL: Sen Kurumsal BT Servis Masası Asistanısın. Çözüm adımlarını net "
+        "ve teknik olarak sırala."
+    )
 
-    full_context = "\n".join(context_blocks)
+  context_blocks = []
+  for idx, (source, category, subject, answer, sim) in enumerate(
+      relevant_docs, 1
+  ):
+    context_blocks.append(
+        f"--- Referans Doküman {idx} ---\n"
+        f"Kaynak: {source}\n"
+        f"Kategori: {category}\n"
+        f"Konu: {subject}\n"
+        f"Çözüm/Cevap: {answer}\n"
+        f"Benzerlik: {sim:.4f}\n"
+    )
 
-    prompt = f"""
+  full_context = "\n".join(context_blocks)
+
+  prompt = f"""
 {persona_directive}
 
 Aşağıda veritabanından çekilen teknik referans dokümanları bulunmaktadır:
@@ -183,40 +186,47 @@ Yanıt formatı:
 - Gereksiz uzun cevap verme.
 """
 
-    oncelikli_modeller = [
-    "gemini-3.8-flash",  # Google API uyarısında önerilen en güncel flash model
-    "gemini-3.5-flash-lite",  # Hızlı ve hafif alternatif model
-    "gemini-2.0-flash",  # Kararlı yedek model
-    "gemini-1.5-flash",  # Klasik yedek model
-]
+  oncelikli_modeller = [
+      "gemini-3.8-flash",  # Google API uyarısında önerilen en güncel flash model
+      "gemini-3.5-flash-lite",  # Hızlı ve hafif alternatif model
+      "gemini-2.0-flash",  # Kararlı yedek model
+      "gemini-1.5-flash",  # Klasik yedek model
+  ]
 
-    config = types.GenerateContentConfig(
-        tool_config=types.ToolConfig(
-            function_calling_config=types.FunctionCallingConfig(mode="NONE")
-        )
-    )
+  config = types.GenerateContentConfig(
+      tool_config=types.ToolConfig(
+          function_calling_config=types.FunctionCallingConfig(mode="NONE")
+      )
+  )
 
-    last_error = None
-    for model_name in oncelikli_modeller:
-        try:
-            print(f"[-] Gemini modeli deneniyor: {model_name}")
-            response = ai_client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=config
-            )
-            return response.text, relevant_docs
-        except Exception as e:
-            print(f"[!] {model_name} hata verdi ({e.__class__.__name__}): {e}")
-            last_error = e
-            continue
+  last_error = None
+  for model_name in oncelikli_modeller:
+    try:
+      print(f"[-] Gemini modeli deneniyor: {model_name}")
+      response = ai_client.models.generate_content(
+          model=model_name, contents=prompt, config=config
+      )
+      # Başarılı olduğunda yanıtı ve kaynakları dönüyoruz (Return burada olmalı)
+      if response and response.text:
+        return response.text, relevant_docs
+    except Exception as e:
+      print(f"[!] {model_name} hata verdi ({e.__class__.__name__}): {e}")
+      last_error = e
+      continue
 
-    raise last_error
+  # Eğer tüm modeller hata verirse None yerine uyarı mesajı dönüyoruz
+  return (
+      "Model servislerine erişilemedi. Detaylı hata:"
+      f" {last_error}", relevant_docs
+  )
 
 
 if __name__ == "__main__":
-    test_soru = "ORA-00942 table or view does not exist hatası alıyorum, nasıl düzeltebilirim?"
-    print(f"\n[?] Soru: {test_soru}\n" + "=" * 60)
-    cevap, kaynaklar = generate_helpdesk_response(test_soru)
-    print("\n[AI Yanıtı]:\n")
-    print(cevap)
+  test_soru = (
+      "ORA-00942 table or view does not exist hatası alıyorum, nasıl"
+      " düzeltebilirim?"
+  )
+  print(f"\n[?] Soru: {test_soru}\n" + "=" * 60)
+  cevap, kaynaklar = generate_helpdesk_response(test_soru)
+  print("\n[AI Yanıtı]:\n")
+  print(cevap)
