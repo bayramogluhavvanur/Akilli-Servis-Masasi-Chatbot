@@ -116,7 +116,7 @@ def generate_chat_title(first_message: str) -> str:
 # 5. HELPDESK CEVABI ÜRET (RAG + Fallback Model Yapısı)
 # ============================================================
 
-def generate_helpdesk_response(user_query: str):
+def generate_helpdesk_response(user_query: str,chat_history: list = None):
   relevant_docs = retrieve_relevant_tickets(user_query, top_k=5)
 
   if not relevant_docs:

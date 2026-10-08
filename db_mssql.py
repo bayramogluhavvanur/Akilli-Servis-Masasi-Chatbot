@@ -334,3 +334,66 @@ def get_all_logs_for_admin():
     finally:
         if conn:
             conn.close()
+            
+def get_top_questions(limit=5):
+    """En sık sorulan kullanıcı sorularını getirir."""
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        # Kullanıcı mesajlarını gruplayıp en çok tekrar edenleri sayıyoruz
+        cursor.execute(
+            f"""
+            SELECT TOP ({limit}) content, COUNT(*) as soru_sayisi
+            FROM ChatMessages
+            WHERE role = 'user'
+            GROUP BY content
+            ORDER BY soru_sayisi DESC
+            """
+        )
+        rows = cursor.fetchall()
+        cursor.close()
+        return rows
+    except Exception as e:
+        print(f"[!] En çok sorulan sorular alınamadı: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+def get_chatbot_metrics():
+    """Chatbot başarı oranı, toplam etkileşim ve ortalama benzerlik skorunu hesaplar."""
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Ortalama benzerlik skoru ve toplam yanıt sayısı
+        cursor.execute(
+            """
+            SELECT 
+                COUNT(*) as toplam_yanit,
+                AVG(CAST(score AS FLOAT)) as ortalama_skor,
+                SUM(CASE WHEN score >= 0.75 THEN 1 ELSE 0 end) as basarili_yanit_sayisi
+            FROM ChatMessages
+            WHERE role = 'assistant' AND score IS NOT NULL
+            """
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        
+        if row:
+            toplam = row[0] or 0
+            ort_skor = row[1] or 0.0
+            basarili = row[2] or 0
+            # Başarı yüzdesi (Örn: 0.75 ve üzeri benzerlik skorunu başarılı sayıyoruz)
+            basari_orani = (basarili / toplam * 100) if toplam > 0 else 0.0
+            return {
+                "toplam_yanit": toplam,
+                "ortalama_skor": ort_skor,
+                "basari_orani": basari_orani
+            }
+        return {"toplam_yanit": 0, "ortalama_skor": 0.0, "basari_orani": 0.0}
+    except Exception as e:
+        print(f"[!] Metrikler alınamadı: {e}")
+        return {"toplam_yanit": 0, "ortalama_skor": 0.0, "basari_orani": 0.0}            

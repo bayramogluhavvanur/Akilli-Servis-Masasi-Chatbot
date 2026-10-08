@@ -32,34 +32,36 @@ if not st.session_state.authenticated:
     tab_login, tab_register = st.tabs(["🔑 Giriş Yap", "📝 Kayıt Ol"])
 
     # 1. SEKME: GİRİŞ YAP
-    with tab_login:
-      st.subheader("Kullanıcı Girişi")
-      login_username = st.text_input("Kullanıcı Adı", key="login_user")
-      login_password = st.text_input(
-          "Şifre", type="password", key="login_pass"
-      )
+    with st.form(key="login_form"):
+        login_username = st.text_input("Kullanıcı Adı")
+        login_password = st.text_input("Şifre", type="password")
 
-      if st.button("Giriş Yap", use_container_width=True, type="primary"):
-        if login_username and login_password:
-          user = db_mssql.authenticate_user(login_username, login_password)
-          if user:
-            st.session_state.authenticated = True
-            st.session_state.user_info = user
+        # Bu buton mutlaka form ile aynı girintide (içeride) olmalı
+        submit_button = st.form_submit_button("Giriş Yap", type="primary", width="stretch")
 
-            sessions = db_mssql.get_user_chat_sessions(user["user_id"])
-            if sessions:
-              st.session_state.session_id = sessions[0]["session_id"]
-              st.session_state.messages = db_mssql.get_session_messages(
-                  st.session_state.session_id
-              )
+        if submit_button:
+            if login_username and login_password:
+                user = db_mssql.authenticate_user(login_username, login_password)
+                if user:
+                    st.session_state.authenticated = True
+                    st.session_state.user_info = user
+                    
+                    sessions = db_mssql.get_user_chat_sessions(user["user_id"])
+                    if sessions:
+                        st.session_state.session_id = sessions[0]["session_id"]
+                        st.session_state.messages = db_mssql.get_session_messages(
+                            st.session_state.session_id
+                        )
+                    else:
+                        st.session_state.session_id = db_mssql.create_chat_session(
+                            user["user_id"], "Yeni Destek Talebi"
+                        )
+                        st.session_state.messages = []
+                    st.rerun()
+                else:
+                    st.error("Kullanıcı adı veya şifre hatalı!")
             else:
-              st.session_state.session_id = db_mssql.create_chat_session(
-                  user["user_id"], "Yeni Destek Talebi"
-              )
-              st.session_state.messages = []
-            st.rerun()
-          else:
-            st.error("Kullanıcı adı veya şifre hatalı!")
+                st.warning("Lütfen kullanıcı adı ve şifre giriniz.")
 
     # 2. SEKME: KAYIT OL (Dikkat: 'with col1:' bloğunun içinde yer almalı!)
     with tab_register:
@@ -97,22 +99,27 @@ is_admin = str(user.get("role", "user")).lower() == "admin"
 with st.sidebar:
     st.header(f"👤 {user['full_name']}")
     st.caption(f"Rol: **{user['role'].upper()}**")
+    is_admin = (
+            st.session_state.user_info.get("role") == "admin" 
+            or st.session_state.user_info.get("username") == "admin"
+        )
 
     if is_admin:
         view_mode = st.radio(
             "Panel Seçimi:", ["💬 Destek Sohbeti", "📊 Admin Denetim Paneli"]
         )
         st.markdown("---")
-    else:
-        view_mode = "💬 Destek Sohbeti"
+        
+    if view_mode == "💬 Destek Sohbeti":
 
-    if st.button("➕ Yeni Sohbet Başlat", use_container_width=True, type="primary"):
-        new_sid = db_mssql.create_chat_session(
-            user["user_id"], "Yeni Destek Talebi"
-        )
-        st.session_state.session_id = new_sid
-        st.session_state.messages = []
-        st.rerun()
+        if st.button("➕ Yeni Sohbet Başlat", width="stretch", type="primary"):
+                user_id = st.session_state.user_info["user_id"]
+
+                new_session_id = db_mssql.create_chat_session(user_id, "Yeni Destek Talebi")
+
+                st.session_state.session_id = new_session_id
+                st.session_state.messages = []
+                st.rerun()
 
     st.markdown("---")
     st.subheader("📜 Geçmiş Sohbetlerim")
@@ -147,11 +154,37 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-# --- 3. EKRAN GÖRÜNÜMLERİ ---
-
+# Eğer admin ve admin paneli seçiliyse, sadece raporu göster ve alttaki sohbeti çalıştırma
 if is_admin and view_mode == "📊 Admin Denetim Paneli":
-    st.title("📊 Sistem Denetim ve RAG Logları")
-    logs = db_mssql.get_all_logs_for_admin()
+    st.title("📊 IT Helpdesk - Admin Denetim Paneli")
+    st.markdown("Chatbot performansını, en çok sorulan soruları ve sistem başarı oranlarını buradan takip edebilirsiniz.")
+    
+    metrics = db_mssql.get_chatbot_metrics()
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(label="💬 Toplam Yanıtlanan Soru", value=metrics["toplam_yanit"])
+    with col2:
+        st.metric(label="🎯 Ortalama Benzerlik Skoru", value=f"%{metrics['ortalama_skor']*100:.1f}")
+    with col3:
+        st.metric(label="📈 Tahmini Başarı Oranı (Skor >= %75)", value=f"%{metrics['basari_orani']:.1f}")
+        
+    st.divider()
+    
+    st.subheader("🔥 En Çok Sorulan Destek Soruları")
+    top_questions = db_mssql.get_top_questions(limit=10)
+    
+    if top_questions:
+        import pandas as pd
+        df_top = pd.DataFrame(top_questions, columns=["Soru İçeriği", "Sorulma Sayısı"])
+        st.bar_chart(df_top.set_index("Soru İçeriği"))
+        
+    st.divider()
+    
+    st.subheader("📋 Detaylı Veritabanı Log Kayıtları") 
+    logs = db_mssql.get_all_logs_for_admin()  
+    
+    # --- 3. EKRAN GÖRÜNÜMLERİ (Admin Paneli İçindeki Log Tablosu) ---
     if logs:
         df_logs = pd.DataFrame(
             [list(row) for row in logs],
@@ -165,11 +198,12 @@ if is_admin and view_mode == "📊 Admin Denetim Paneli":
                 "Tarih",
             ],
         )
-        st.dataframe(df_logs, use_container_width=True)
+        st.dataframe(df_logs, width="stretch")
     else:
         st.write("Henüz kayıtlı log bulunmuyor.")
 
 else:
+    # --- NORMAL SOHBET EKRANI (Admin Değilse veya Mod Sohbetse) ---
     st.title("🛠️ BT Servis Masası Akıllı Asistanı")
     st.caption(
         f"Mevcut Oturum ID: `#{st.session_state.session_id}` | PostgreSQL (pgvector) & MSSQL Destekli"
@@ -184,12 +218,15 @@ else:
             selected_prompt = st.selectbox(
                 "Daha önce sorduğunuz bir soruyu seçip tekrar çalıştırabilirsiniz:",
                 options=["--- Soru Seçin ---"] + list(reversed(user_prompts)),
+                key="quick_resend_select"
             )
             if (
                 selected_prompt
                 and selected_prompt != "--- Soru Seçin ---"
                 and st.button("Soruyu Tekrar Gönder")
             ):
+                st.session_state.resend_prompt = selected_prompt
+                st.rerun()
                 prompt_to_use = selected_prompt
 
     # Mesajları Ekrana Bas
@@ -208,6 +245,21 @@ else:
                                 st.caption(f"**Konu:** {subj}")
                         else:
                             st.markdown(str(source_item))
+     
+    if user_prompts:
+        with st.expander("🔍 Bu Sohbette Sorduğunuz Sorular (Hızlı Tekrar Sor)"):
+            selected_prompt = st.selectbox(
+                "Daha önce sorduğunuz bir soruyu seçip tekrar çalıştırabilirsiniz:",
+                options=["--- Soru Seçin ---"] + list(reversed(user_prompts)),
+                key="quick_resend_select"
+            )
+            if (
+                selected_prompt
+                and selected_prompt != "--- Soru Seçin ---"
+                and st.button("Soruyu Tekrar Gönder")
+            ):
+                st.session_state.retry_prompt = selected_prompt
+                st.rerun()                        
 
     # Girdileri Yönet
 # ============================================================
@@ -222,107 +274,97 @@ prompt_to_use = None
 sources = []
 
 if chat_input_val:
-  prompt_to_use = chat_input_val
+    prompt_to_use = chat_input_val
 elif st.session_state.get("retry_prompt"):
-  prompt_to_use = st.session_state.retry_prompt
-  # Kullanıldıktan sonra sıfırlıyoruz
-  st.session_state.retry_prompt = None
+    prompt_to_use = st.session_state.retry_prompt
+    # Kullanıldıktan sonra sıfırlıyoruz
+    st.session_state.retry_prompt = None
 
 # Eğer işlenecek bir soru/prompt varsa çalıştırma bloğu
 if prompt_to_use:
-  # 1. Kullanıcı mesajını arayüze ve veritabanına ekle
-  st.session_state.messages.append({"role": "user", "content": prompt_to_use})
+    # 1. Kullanıcı mesajını arayüze ve veritabanına ekle
+    st.session_state.messages.append({"role": "user", "content": prompt_to_use})
 
-  db_mssql.log_message(
-    session_id=st.session_state.session_id,
-    role="user",
-    content=prompt_to_use,
-    sources=None,
-    score=None,
-)
+    db_mssql.log_message(
+        session_id=st.session_state.session_id,
+        role="user",
+        content=prompt_to_use,
+        sources=None,
+        score=None,
+    )
 
-  # İlk mesajsa sohbet başlığını güncelle
-  if len(st.session_state.messages) == 1:
-    new_title = generate_chat_title(prompt_to_use)
-    db_mssql.update_session_title(st.session_state.session_id, new_title)
+    # İlk mesajsa sohbet başlığını güncelle
+    if len(st.session_state.messages) == 1:
+        new_title = generate_chat_title(prompt_to_use)
+        db_mssql.update_session_title_if_default(st.session_state.session_id, new_title)
 
-  with st.chat_message("user"):
-    st.markdown(prompt_to_use)
+    with st.chat_message("user"):
+        st.markdown(prompt_to_use)
 
-  # 2. Asistan yanıtını üret
-  with st.chat_message("assistant"):
-    with st.spinner("Bilgi bankası taranıyor ve yanıt hazırlanıyor..."):
-      try:
-        # 2 değişkeni de güvenle karşılıyoruz
-        response_text, relevant_docs = generate_helpdesk_response(
-            prompt_to_use
-        )
+    # 2. Asistan yanıtını üret
+    with st.chat_message("assistant"):
+        with st.spinner("Bilgi bankası taranıyor ve yanıt hazırlanıyor..."):
+            try:
+                # Geçmiş mesajları da dahil ederek RAG motorunu çağırıyoruz
+                response_text, relevant_docs = generate_helpdesk_response(
+                    user_query=prompt_to_use,
+                    chat_history=st.session_state.get("messages", [])
+                )
+                
+                # Kaynakları güncelliyoruz
+                sources = relevant_docs
 
-        st.markdown(response_text)
+                st.markdown(response_text)
 
-        # İsteğe bağlı: RAG kaynaklarını göster
-        if relevant_docs:
-          with st.expander("📚 Kullanılan Referans Dokümanlar"):
-            for doc in relevant_docs:
-              st.write(
-                  f"- **Kaynak:** {doc[0]} | **Kategori:** {doc[1]} | **Skor:**"
-                  f" {doc[4]:.4f}"
-              )
+                # İsteğe bağlı: RAG kaynaklarını göster
+                if sources:
+                    with st.expander("📚 Kullanılan Referans Dokümanlar"):
+                        for doc in sources:
+                            st.write(
+                                f"- **Kaynak:** {doc[0]} | **Kategori:** {doc[1]} | **Skor:** {doc[4]:.4f}"
+                            )
 
-        # Yanıtı kaydet
-        st.session_state.messages.append(
-            {"role": "assistant", "content": response_text}
-        )
-        top_score = (
-            float(sources[0][4]) if sources and len(sources[0]) >= 5 else None
-        )
-        db_mssql.log_message(
-            session_id=st.session_state.session_id,
-            role="assistant",
-            content=response_text,
-            sources=sources,
-            score=top_score
-            
-        )
+                # Yanıtı hafızaya kaydet
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": response_text}
+                )
+                
+                top_score = (
+                    float(sources[0][4]) if sources and len(sources[0]) >= 5 else None
+                )
+                
+                db_mssql.log_message(
+                    session_id=st.session_state.session_id,
+                    role="assistant",
+                    content=response_text,
+                    sources=sources,
+                    score=top_score
+                )
 
-        st.session_state.last_error = None
+                st.session_state.last_error = None
 
-      except Exception as e:
-        st.session_state.retry_prompt = prompt_to_use
-        st.session_state.last_error = str(e)
+            except Exception as e:
+                st.error(f"Bir hata oluştu: {e}")
+                st.session_state.last_error = str(e)
+                # Hata durumunda yeniden deneme için prompt'u hafızada tutuyoruz
+                st.session_state.retry_prompt = prompt_to_use
 
-        st.error("❌ Yanıt oluşturulurken bir hata oluştu.")
-        st.error(f"🔍 Hata Detayı: {e}")
+        # Eğer bir hata oluştuysa veya yanıt verilemediyse Yeniden Sor butonu gösterilebilir
+        if st.button("🔄 Yeniden Sor", width="stretch"):
+            st.session_state.retry_prompt = prompt_to_use
+            st.rerun()
 
-        if st.button("🔄 Yeniden Sor",width="stretch"):
-          st.rerun()
         # Cevabı ve kullanılan kaynakları göster
         st.markdown(response_text)
 
         if sources:
-          with st.expander("📚 Kullanılan Kaynaklar"):
-            for source in sources:
-              if sources:
-                with st.expander("📚 Kullanılan Kaynaklar"):
-                    for source in sources:
-                     if isinstance(source, (list, tuple)) and len(source) >= 5:
+            with st.expander("📚 Kullanılan Kaynaklar"):
+                for source in sources:
+                    if isinstance(source, (list, tuple)) and len(source) >= 5:
                         src, cat, subj, ans, sim = source[:5]
                         st.markdown(
-                            f"**Kaynak:** `{src}` | **Kategori:** `{cat}` |"
-                            f" **Benzerlik:** `%{float(sim)*100:.1f}`"
+                            f"**Kaynak:** `{src}` | **Kategori:** `{cat}` | "
+                            f"**Benzerlik:** `%{float(sim)*100:.1f}`"
                         )
-                     else:
-                      st.markdown(str(source))
-                      
-      except Exception as e:
-        # HATA DURUMUNDA SORUYU RETRY DÜĞMESİ İÇİN HAFIZADA TUT
-        st.session_state.retry_prompt = active_prompt
-        st.session_state.last_error = str(e)
-
-        st.error("❌ Yanıt oluşturulurken bir hata oluştu.")
-        st.info(
-            "Aynı soruyu tekrar göndermek için yukarıdaki '🔄 Yeniden"
-            " Sor' butonuna tıklayın."
-        )
-
-  st.rerun()
+                    else:
+                        st.markdown(str(source))
