@@ -38,6 +38,19 @@ CREATE TABLE ChatMessages (
 );
 GO
 
+-- ==========================================
+-- SİSTEM METRİKLERİ VE LOGLARI İÇİN TABLO
+-- ==========================================
+CREATE TABLE ChatLogs (
+    log_id INT IDENTITY(1,1) PRIMARY KEY,
+    session_id NVARCHAR(100),
+    role NVARCHAR(50),      -- Mesajın sahibi: 'user' veya 'assistant'
+    content NVARCHAR(MAX),  -- Sorulan soru veya verilen cevap metni
+    score FLOAT NULL,       -- Vektör benzerlik skoru (sadece assistant için)
+    created_at DATETIME DEFAULT GETDATE()
+); 
+GO
+
 -- 4. Başlangıç Kullanıcıları
 INSERT INTO Users (username, password_hash, full_name, role)
 VALUES ('admin', '123456', 'Sistem Yöneticisi', 'admin'),
