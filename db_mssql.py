@@ -295,7 +295,7 @@ def get_all_logs_for_admin():
 
         # Yeni tablo (ChatLogs) ve yeni sütunlar (role, content, score) ile güncellendi
         query = """
-            SELECT TOP 50 
+            SELECT TOP 200
                 u.username, u.full_name, s.session_id, 
                 l.role, l.content, l.score, l.created_at
             FROM ChatLogs l
