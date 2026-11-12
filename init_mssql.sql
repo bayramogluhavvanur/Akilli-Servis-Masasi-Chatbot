@@ -44,9 +44,9 @@ GO
 CREATE TABLE ChatLogs (
     log_id INT IDENTITY(1,1) PRIMARY KEY,
     session_id NVARCHAR(100),
-    role NVARCHAR(50),      -- Mesajın sahibi: 'user' veya 'assistant'
-    content NVARCHAR(MAX),  -- Sorulan soru veya verilen cevap metni
-    score FLOAT NULL,       -- Vektör benzerlik skoru (sadece assistant için)
+    role NVARCHAR(50),      
+    content NVARCHAR(MAX),  
+    score FLOAT NULL,       
     created_at DATETIME DEFAULT GETDATE()
 ); 
 GO
