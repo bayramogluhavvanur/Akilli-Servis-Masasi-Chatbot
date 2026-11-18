@@ -4,14 +4,7 @@ import bcrypt
 import pyodbc
 
 # Docker MSSQL Bağlantı Dizesi
-CONN_STR = (
-    "DRIVER={ODBC Driver 17 for SQL Server};"
-    "SERVER=localhost,1433;"
-    "DATABASE=ServisMasasi_Auth;"
-    "UID=sa;"
-    "PWD=ServisMasasi2026!;"
-    "TrustServerCertificate=yes;"
-)
+from config import MSSQL_CONN_STR as CONN_STR
 
 
 def validate_user_credentials(email, password):
@@ -185,6 +178,7 @@ def log_message(session_id, role, content, sources=None, score=None):
         cursor.execute(
             """
             INSERT INTO ChatLogs (session_id, role, content, score)
+            OUTPUT INSERTED.log_id
             VALUES (?, ?, ?, ?)
             """,
             (session_id, role, content, score),
@@ -254,7 +248,7 @@ def get_user_chat_sessions(user_id):
             conn.close()
 
 
-def get_session_messages(session_id):
+def get_session_messages(session_id, user_id):
     """Belirli bir oturuma ait tüm mesajları getirir."""
     conn = None
     try:
@@ -262,28 +256,45 @@ def get_session_messages(session_id):
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT role, content 
-            FROM ChatLogs 
-            WHERE session_id = ? 
-            ORDER BY created_at ASC
+            SELECT l.log_id, l.role, l.content
+            FROM ChatLogs l
+            JOIN ChatSessions s ON s.session_id = TRY_CAST(l.session_id AS INT)
+            WHERE l.session_id = ? AND s.user_id = ?
+            ORDER BY l.created_at ASC
             """,
-            (session_id,),
+            (str(session_id), user_id),
         )
         rows = cursor.fetchall()
         cursor.close()
-
-        messages = []
-        for r in rows:
-            # r[0] -> role, r[1] -> content (2 elemanlı yapı güvenle işleniyor)
-            messages.append({"role": r[0], "content": r[1]})
-
-        return messages
+        return [{"log_id": r[0], "role": r[1], "content": r[2]} for r in rows]
     except Exception as e:
         print(f"[!] Oturum mesajlarını çekme hatası: {e}")
         return []
     finally:
         if conn:
             conn.close()
+            
+def save_feedback(log_id, user_id, rating):
+    """Bir yanıt için 👍(1) / 👎(0) puanını kaydeder; tekrar puanlanırsa günceller."""
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM Feedbacks WHERE log_id = ? AND user_id = ?",
+            (log_id, user_id),
+        )
+        cursor.execute(
+            "INSERT INTO Feedbacks (log_id, user_id, rating) VALUES (?, ?, ?)",
+            (log_id, user_id, int(rating)),
+        )
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        print(f"[!] Geri bildirim kaydı hatası: {e}")
+    finally:
+        if conn:
+            conn.close()           
 
 
 def get_all_logs_for_admin():
@@ -345,20 +356,35 @@ def get_top_questions(limit=5):
 
 
 def get_chatbot_metrics():
-    """Chatbot başarı oranı, toplam etkileşim ve ortalama benzerlik skorunu hesaplar."""
+    """Toplam yanıt, ortalama benzerlik ve birleşik başarı oranını hesaplar.
+
+    Başarı: kullanıcı puanı varsa 👍=başarılı, 👎=başarısız;
+    puan yoksa benzerlik skoru >= 0.75 başarılı sayılır.
+    """
     conn = None
+    bos = {"toplam_yanit": 0, "ortalama_skor": 0.0, "basari_orani": 0.0, "oylanan": 0}
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # DÜZELTME 1: CASE WHEN içindeki score değerini de FLOAT'a dönüştürdük (CAST).
         cursor.execute("""
-            SELECT 
-                COUNT(*) as toplam_yanit,
-                AVG(CAST(score AS FLOAT)) as ortalama_skor,
-                SUM(CASE WHEN CAST(score AS FLOAT) >= 0.75 THEN 1 ELSE 0 END) as basarili_yanit_sayisi
-            FROM ChatLogs
-            WHERE role = 'assistant' AND score IS NOT NULL
+            SELECT
+                COUNT(*) AS toplam_yanit,
+                AVG(CAST(l.score AS FLOAT)) AS ortalama_skor,
+                SUM(CASE
+                        WHEN fb.avg_rating IS NOT NULL THEN
+                            CASE WHEN fb.avg_rating >= 0.5 THEN 1 ELSE 0 END
+                        WHEN CAST(l.score AS FLOAT) >= 0.75 THEN 1
+                        ELSE 0
+                    END) AS basarili_yanit_sayisi,
+                SUM(CASE WHEN fb.avg_rating IS NOT NULL THEN 1 ELSE 0 END) AS oylanan
+            FROM ChatLogs l
+            LEFT JOIN (
+                SELECT log_id, AVG(CAST(rating AS FLOAT)) AS avg_rating
+                FROM Feedbacks
+                GROUP BY log_id
+            ) fb ON fb.log_id = l.log_id
+            WHERE l.role = 'assistant' AND l.score IS NOT NULL
             """)
         row = cursor.fetchone()
         cursor.close()
@@ -367,24 +393,19 @@ def get_chatbot_metrics():
             toplam = row[0] or 0
             ort_skor = row[1] or 0.0
             basarili = row[2] or 0
-
-            # Başarı yüzdesi (Örn: 0.75 ve üzeri benzerlik skorunu başarılı sayıyoruz)
+            oylanan = row[3] or 0
             basari_orani = (basarili / toplam * 100) if toplam > 0 else 0.0
-
             return {
                 "toplam_yanit": toplam,
                 "ortalama_skor": ort_skor,
                 "basari_orani": basari_orani,
+                "oylanan": oylanan,
             }
+        return bos
 
-        return {"toplam_yanit": 0, "ortalama_skor": 0.0, "basari_orani": 0.0}
-
-    # DÜZELTME 2: Python'un çökmesini engelleyen hata yakalama bloğu eklendi.
     except Exception as e:
         print(f"Metrikler çekilirken hata oluştu: {e}")
-        return {"toplam_yanit": 0, "ortalama_skor": 0.0, "basari_orani": 0.0}
-
-    # DÜZELTME 3: Veritabanı bağlantısı garanti olarak kapatılarak performans düşüşü önlendi.
+        return bos
     finally:
         if conn:
             conn.close()

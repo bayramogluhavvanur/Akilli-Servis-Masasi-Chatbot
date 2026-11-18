@@ -6,6 +6,13 @@ from google.genai import types
 from sentence_transformers import SentenceTransformer
 import itertools
 from prompts import SYSTEM_PROMPTS, MODE_CATEGORIES
+from config import PG, KB_TABLE
+MODE_FILTER = {"Windows Server": "Windows", "Oracle DB": "Oracle"}
+MODE_PERSONA = {
+    "Windows Server": SYSTEM_PROMPTS["windows_server"],
+    "Oracle DB": SYSTEM_PROMPTS["oracle_db"],
+    "Genel": SYSTEM_PROMPTS["default"],
+}
 
 # ============================================================
 # 1. ORTAM DEĞİŞKENLERİ VE GEMINI CLIENT
@@ -104,13 +111,7 @@ def stream_helpdesk_response(user_query: str, mode: str = "Genel"):
 
 
 def get_db_connection():
-    return psycopg2.connect(
-        host="localhost",
-        port="5432",
-        dbname="servis_masasi_db",
-        user="postgres",
-        password="admin123",
-    )
+ return psycopg2.connect(**PG)
 
 
 # ============================================================
@@ -118,7 +119,7 @@ def get_db_connection():
 # ============================================================
 
 
-def retrieve_relevant_tickets(query: str, top_k: int = 5):
+def retrieve_relevant_tickets(query: str, top_k: int = 5, category_like=None):
 
     print("\n" + "=" * 70)
     print(f"[RAG] Kullanıcı sorusu: {query}")
@@ -128,19 +129,35 @@ def retrieve_relevant_tickets(query: str, top_k: int = 5):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    sql = """
-    SELECT
-        source,
-        category,
-        subject,
-        answer,
-        1 - (embedding <=> %s::vector) AS similarity
-    FROM knowledge_base
-    ORDER BY embedding <=> %s::vector
-    LIMIT %s;
-    """
+    if category_like:
+        sql = f"""
+        SELECT
+            source,
+            category,
+            subject,
+            answer,
+            1 - (embedding <=> %s::vector) AS similarity
+        FROM {KB_TABLE}
+        WHERE category ILIKE %s
+        ORDER BY embedding <=> %s::vector
+        LIMIT %s;
+        """
+        params = (query_vector, f"%{category_like}%", query_vector, top_k)
+    else:
+        sql = f"""
+        SELECT
+            source,
+            category,
+            subject,
+            answer,
+            1 - (embedding <=> %s::vector) AS similarity
+        FROM {KB_TABLE}
+        ORDER BY embedding <=> %s::vector
+        LIMIT %s;
+        """
+        params = (query_vector, query_vector, top_k)
 
-    cursor.execute(sql, (query_vector, query_vector, top_k))
+    cursor.execute(sql, params)
     rows = cursor.fetchall()
 
     cursor.close()
@@ -192,11 +209,17 @@ def generate_chat_title(first_message: str) -> str:
 # ============================================================
 # 5. HELPDESK CEVABI ÜRET (RAG + Fallback Model Yapısı)
 # ============================================================
+def format_history(chat_history, max_turns=6):
+    msgs = (chat_history or [])[:-1][-max_turns:]   # son eleman şu anki soru
+    if not msgs:
+        return ""
+    lines = [f"{'Kullanıcı' if m['role']=='user' else 'Asistan'}: {m['content'][:600]}" for m in msgs]
+    return "ÖNCEKİ KONUŞMA:\n" + "\n".join(lines) + "\n"
 
-
-def generate_helpdesk_response(user_query: str, chat_history: list = None):
-    relevant_docs = retrieve_relevant_tickets(user_query, top_k=5)
-
+def generate_helpdesk_response(user_query: str, chat_history: list = None, mode: str = "Otomatik"):
+    relevant_docs = retrieve_relevant_tickets(
+    user_query, top_k=5, category_like=MODE_FILTER.get(mode)
+)
     if not relevant_docs:
         return (
             "Bilgi bankasında bu konuyla ilgili eşleşen bir kayıt bulunamadı.",
@@ -224,6 +247,8 @@ def generate_helpdesk_response(user_query: str, chat_history: list = None):
             "ROL: Sen Kurumsal BT Servis Masası Asistanısın. Çözüm adımlarını net "
             "ve teknik olarak sırala."
         )
+    if mode in MODE_PERSONA:
+        persona_directive = MODE_PERSONA[mode]    
 
     context_blocks = []
     for idx, (source, category, subject, answer, sim) in enumerate(relevant_docs, 1):
@@ -243,7 +268,7 @@ def generate_helpdesk_response(user_query: str, chat_history: list = None):
 
 Aşağıda veritabanından çekilen teknik referans dokümanları bulunmaktadır:
 {full_context}
-
+{format_history(chat_history)}
 KULLANICI SORUSU:
 {user_query}
 

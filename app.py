@@ -1,4 +1,4 @@
-from typer import prompt
+
 from google import genai
 import db_mssql
 import pandas as pd
@@ -6,6 +6,7 @@ from rag_engine import generate_chat_title, generate_helpdesk_response
 import streamlit as st
 import time
 import rag_engine
+import auth_jwt
 
 st.set_page_config(
     page_title="BT Servis Masası Asistanı", page_icon="🛠️", layout="wide"
@@ -55,12 +56,17 @@ if "retry_prompt" not in st.session_state:
     st.session_state.retry_prompt = None
 if "last_error" not in st.session_state:
     st.session_state.last_error = None
+if "token" not in st.session_state:
+    st.session_state.token = None  
+
+                                                   
 
 # --- 1. GİRİŞ VE KAYIT EKRANI ---
 if not st.session_state.authenticated:
     st.title("🔐 BT Servis Masası Portalı")
     st.caption("Kurumsal teknik destek ve çözüm merkezine hoş geldiniz.")
-
+    if st.session_state.pop("session_expired", False):
+        st.warning("Oturum süresi doldu veya geçersiz. Lütfen tekrar giriş yapın.")
     col1, _ = st.columns([1.5, 2.5])
     with col1:
         tab_login, tab_register = st.tabs(["🔑 Giriş Yap", "📝 Kayıt Ol"])
@@ -71,7 +77,7 @@ if not st.session_state.authenticated:
                 login_password = st.text_input("Şifre", type="password")
 
                 submit_button = st.form_submit_button(
-                    "Giriş Yap", type="primary", use_container_width=True
+                    "Giriş Yap", type="primary", width='stretch'
                 )
 
                 if submit_button:
@@ -80,12 +86,13 @@ if not st.session_state.authenticated:
                         if user:
                             st.session_state.authenticated = True
                             st.session_state.user_info = user
+                            st.session_state.token = auth_jwt.create_token(user) 
 
                             sessions = db_mssql.get_user_chat_sessions(user["user_id"])
                             if sessions:
                                 st.session_state.session_id = sessions[0]["session_id"]
                                 st.session_state.messages = db_mssql.get_session_messages(
-                                    st.session_state.session_id
+                                st.session_state.session_id, user["user_id"]
                                 )
                             else:
                                 st.session_state.session_id = db_mssql.create_chat_session(
@@ -111,7 +118,7 @@ if not st.session_state.authenticated:
                 key="reg_pass",
             )
 
-            if st.button("Hesap Oluştur", use_container_width=True):
+            if st.button("Hesap Oluştur", width='stretch'):
                 if reg_fullname and reg_username and reg_email and reg_password:
                     success, msg = db_mssql.register_user(
                         reg_username, reg_email, reg_password, reg_fullname, role="user"
@@ -124,6 +131,17 @@ if not st.session_state.authenticated:
                     st.toast("Lütfen tüm alanları doldurun.", icon="⚠️")
 
         st.stop()
+        
+claims = auth_jwt.verify_token(st.session_state.get("token"))
+if not claims:
+    st.session_state.authenticated = False
+    st.session_state.user_info = None
+    st.session_state.session_id = None
+    st.session_state.token = None
+    st.session_state.messages = []
+    st.session_state.session_expired = True
+    st.rerun()
+is_admin = str(claims.get("role", "user")).lower() == "admin"        
 
 # --- 2. ANA SOHBET VE GEÇMİŞ SOHBETLER PANELİ ---
 user = st.session_state.get("user_info") or {}
@@ -142,11 +160,16 @@ with st.sidebar:
         st.markdown("---")
 
     if view_mode == "💬 Destek Sohbeti":
-        if st.button("➕ Yeni Sohbet Başlat", use_container_width=True, type="primary"):
+        st.selectbox(
+            "🧠 Uzman Modu",
+            ["Otomatik", "Genel", "Windows Server", "Oracle DB"],
+            key="expert_mode",
+        )        
+        if st.button("➕ Yeni Sohbet Başlat", width='stretch', type="primary"):
             user_id = st.session_state.user_info["user_id"]
             new_session_id = db_mssql.create_chat_session(user_id, "Yeni Destek Talebi")
             st.session_state.session_id = new_session_id
-            st.session_state.messages = []
+            st.session_state.messages = db_mssql.get_session_messages(st.session_state.session_id, user["user_id"])
             st.rerun()
 
     st.markdown("---")
@@ -165,18 +188,19 @@ with st.sidebar:
         if st.button(
             button_label,
             key=f"sess_{sid}",
-            use_container_width=True,
+            width='stretch',
             type="secondary" if not is_active else "primary",
         ):
             st.session_state.session_id = sid
-            st.session_state.messages = db_mssql.get_session_messages(sid)
+            st.session_state.messages = db_mssql.get_session_messages(st.session_state.session_id, user["user_id"])
             st.rerun()
 
     st.markdown("---")
-    if st.button("🚪 Çıkış Yap", use_container_width=True):
+    if st.button("🚪 Çıkış Yap", width='stretch'):
         st.session_state.authenticated = False
         st.session_state.user_info = None
         st.session_state.session_id = None
+        st.session_state.token = None
         st.session_state.messages = []
         st.rerun()
 
@@ -199,9 +223,13 @@ if is_admin and view_mode == "📊 Admin Denetim Paneli":
         )
     with col3:
         st.metric(
-            label="📈 Tahmini Başarı Oranı (Skor >= %75)",
+            label="📈 Başarı Oranı (Kullanıcı Puanı + Benzerlik)",
             value=f"%{metrics['basari_orani']:.1f}",
         )
+    st.caption(
+        f"Başarı oranı: {metrics['oylanan']} yanıt kullanıcı puanıyla (👍/👎), "
+        f"kalan {metrics['toplam_yanit'] - metrics['oylanan']} yanıt benzerlik skoruyla (≥ %75) değerlendirildi."
+    )
 
     st.divider()
 
@@ -230,7 +258,7 @@ if is_admin and view_mode == "📊 Admin Denetim Paneli":
                 "Tarih",
             ],
         )
-        st.dataframe(df_logs, use_container_width=True)
+        st.dataframe(df_logs, width='stretch')
     else:
         st.write("Henüz kayıtlı log bulunmuyor.")
 
@@ -242,8 +270,8 @@ else:
     user_prompts = [
         m["content"] for m in st.session_state.messages if m["role"] == "user"
     ]
-
-    # Mesajları Ekrana Bas
+    
+                   # Mesajları Ekrana Bas
     for message in st.session_state.messages:
         avatar_icon = "🧑‍💻" if message["role"] == "user" else "🛠️"
         safe_role = message.get("role") or "assistant"
@@ -264,6 +292,22 @@ else:
                                 st.caption(f"**Konu:** {subj}")
                         else:
                             st.markdown(str(source_item))
+
+            if message["role"] == "assistant" and message.get("log_id"):
+                lid = message["log_id"]
+                col_up, col_down, _ = st.columns([1, 1, 10])
+                with col_up:
+                    if st.button("Faydalı", key=f"up_{lid}", icon=":material/thumb_up:"):
+                        db_mssql.save_feedback(
+                            lid, st.session_state.user_info["user_id"], 1
+                        )
+                        st.toast("Geri bildiriminiz için teşekkürler!", icon="👍")
+                with col_down:
+                    if st.button("Faydasız", key=f"down_{lid}", icon=":material/thumb_down:"):
+                        db_mssql.save_feedback(
+                            lid, st.session_state.user_info["user_id"], 0
+                        )
+                        st.toast("Bunu geliştirmek için çalışacağız.", icon="👎")
 
     def soruyu_hafizaya_al():
         secilen = st.session_state.get("quick_resend_select")
@@ -290,17 +334,17 @@ else:
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("🔑 Şifremi Unuttum", use_container_width=True):
+            if st.button("🔑 Şifremi Unuttum", width='stretch'):
                 st.session_state.retry_prompt = "Şifremi unuttum, nasıl sıfırlayabilirim?"
                 st.rerun()
         with col2:
-            if st.button("🌍 VPN'e Bağlanamıyorum", use_container_width=True):
+            if st.button("🌍 VPN'e Bağlanamıyorum", width='stretch'):
                 st.session_state.retry_prompt = (
                     "VPN bağlantı hatası alıyorum, ne yapmalıyım?"
                 )
                 st.rerun()
         with col3:
-            if st.button("🖨️ Yazıcı Çalışmıyor", use_container_width=True):
+            if st.button("🖨️ Yazıcı Çalışmıyor", width='stretch'):
                 st.session_state.retry_prompt = "Ofisteki yazıcıya belge gönderemiyorum."
                 st.rerun()
 
@@ -337,6 +381,7 @@ else:
                     response_text, relevant_docs = generate_helpdesk_response(
                         user_query=prompt_to_use,
                         chat_history=st.session_state.get("messages", []),
+                        mode=st.session_state.get("expert_mode", "Otomatik")
                     )
 
                     sources = relevant_docs
@@ -355,19 +400,11 @@ else:
                                     f"- **Kaynak:** {doc[0]} | **Kategori:** {doc[1]} | **Skor:** {doc[4]:.4f}"
                                 )
 
-                        feedback = st.feedback("thumbs", key=f"fb_{len(st.session_state.messages)}")
-                        if feedback == 1:
-                            st.toast("Harika! Geri bildiriminiz için teşekkürler.", icon="👍")
-                        elif feedback == 0:
-                            st.toast("Bunu geliştirmek için çalışacağız.", icon="👎")
-
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": response_text}
+                        top_score = (
+                        float(sources[0][4]) if sources and len(sources[0]) >= 5 else None
                     )
 
-                    top_score = float(sources[0][4]) if sources and len(sources[0]) >= 5 else None
-
-                    db_mssql.log_message(
+                    log_id = db_mssql.log_message(
                         session_id=st.session_state.session_id,
                         role="assistant",
                         content=response_text,
@@ -375,11 +412,15 @@ else:
                         score=top_score,
                     )
 
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": response_text, "log_id": log_id}
+                    )
+
                     st.session_state.last_error = None
 
                 except Exception as e:
                     st.error(f"Bir hata oluştu: {e}")
                     st.session_state.last_error = str(e)
-                    st.session_state.retry_prompt = prompt_to_use
+                    st.stop()
 
         st.rerun()
