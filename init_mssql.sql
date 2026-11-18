@@ -8,6 +8,7 @@ GO
 CREATE TABLE Users (
     user_id INT IDENTITY(1,1) PRIMARY KEY,
     username NVARCHAR(50) NOT NULL UNIQUE,
+    email NVARCHAR(255) NULL,
     password_hash NVARCHAR(255) NOT NULL,
     full_name NVARCHAR(100) NOT NULL,
     role NVARCHAR(20) DEFAULT 'user',
@@ -51,8 +52,19 @@ CREATE TABLE ChatLogs (
 ); 
 GO
 
+--GERİ BİLDİRİM--
+CREATE TABLE Feedbacks (
+    feedback_id INT IDENTITY(1,1) PRIMARY KEY,
+    log_id INT NOT NULL REFERENCES ChatLogs(log_id),
+    user_id INT NOT NULL REFERENCES Users(user_id),
+    rating TINYINT NOT NULL,          -- 1 = 👍, 0 = 👎
+    comment NVARCHAR(500) NULL,
+    created_at DATETIME2 DEFAULT GETDATE()
+);
+
 -- 4. Başlangıç Kullanıcıları
 INSERT INTO Users (username, password_hash, full_name, role)
 VALUES ('admin', '123456', 'Sistem Yöneticisi', 'admin'),
        ('destek_uzmani', '123456', 'Ahmet Yılmaz', 'technician');
 GO
+

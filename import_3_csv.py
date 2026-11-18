@@ -2,7 +2,6 @@ import os
 import pandas as pd
 import psycopg2
 from sentence_transformers import SentenceTransformer
-from sympy import content
 
 # 1. Multilingual Embedding Modeli
 print("[-] Multilingual Vektör modeli yükleniyor...")
