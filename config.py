@@ -12,5 +12,5 @@ MSSQL_CONN_STR = (
     "DATABASE=ServisMasasi_Auth;UID=sa;"
     f"PWD={{{os.getenv('MSSQL_PASSWORD', '')}}};TrustServerCertificate=yes;"
 )
-KB_TABLE = os.getenv("KB_TABLE", "knowledge_base")
+KB_TABLE = os.getenv("KB_TABLE", "knowledge_base_v2")
 JWT_SECRET = os.getenv("JWT_SECRET", "")

@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: servismasasi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PG_DB:-servis_masasi_db}
+      POSTGRES_USER: ${PG_USER:-postgres}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?.env dosyasında PG_PASSWORD tanımlı olmalı}
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./init_postgres.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-postgres} -d ${PG_DB:-servis_masasi_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: servismasasi-mssql
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_PASSWORD:?.env dosyasında MSSQL_PASSWORD tanımlı olmalı}
+    ports:
+      - "${MSSQL_PORT:-1433}:1433"
+    volumes:
+      - mssqldata:/var/opt/mssql
+
+volumes:
+  pgdata:
+    name: servismasasi_pgdata
+  mssqldata:
+    name: servismasasi_mssqldata

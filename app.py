@@ -400,7 +400,7 @@ else:
                                     f"- **Kaynak:** {doc[0]} | **Kategori:** {doc[1]} | **Skor:** {doc[4]:.4f}"
                                 )
 
-                        top_score = (
+                    top_score = (
                         float(sources[0][4]) if sources and len(sources[0]) >= 5 else None
                     )
 
