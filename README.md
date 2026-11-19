@@ -387,6 +387,7 @@ python -m venv venv
 
 ```bash
 pip install streamlit pandas psycopg2-binary sentence-transformers pyodbc bcrypt python-dotenv google-genai datasets
+pip install -r requirements.txt
 ```
 
 > JWT özgün olarak yazıldığı için ek bir JWT kütüphanesi gerekmez.
@@ -394,16 +395,12 @@ pip install streamlit pandas psycopg2-binary sentence-transformers pyodbc bcrypt
 ### 3. Veritabanlarını Docker ile başlatın
 
 ```bash
-# PostgreSQL + pgvector
-docker run -d --name rag-postgres -p 5432:5432 \
-  -e POSTGRES_PASSWORD=admin123 -e POSTGRES_DB=servis_masasi_db \
-  pgvector/pgvector:pg16
-
-# Microsoft SQL Server
-docker run -d --name mssql-server -p 1433:1433 \
-  -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=ServisMasasi2026!" \
-  mcr.microsoft.com/mssql/server:2022-latest
+cp .env.example .env      # Windows: copy .env.example .env
+# .env içindeki parolaları doldurun
+docker compose up -d
 ```
+
+Bu komut `servismasasi-postgres` (PostgreSQL + pgvector) ve `servismasasi-mssql` (SQL Server) konteynerlerini başlatır. PostgreSQL tabloları `init_postgres.sql` ile otomatik oluşur.
 
 > Parolalar örnektir. Kendi ortamınızda güçlü parolalar kullanın ve `.env` dosyasına aynısını yazın.
 
@@ -412,21 +409,17 @@ docker run -d --name mssql-server -p 1433:1433 \
 Proje kök dizininde `.env` dosyası oluşturun. Bu dosya `.gitignore` içindedir, repoya girmez:
 
 ```env
-# PostgreSQL
-PG_PASSWORD=admin123
-
-# MSSQL
-MSSQL_PASSWORD=ServisMasasi2026!
-
-# JWT gizli anahtarı (aşağıdaki komutla üretin)
-JWT_SECRET=uretilen_uzun_rastgele_deger
-
-# Gemini (tek anahtar veya yedekli çoklu anahtar)
-GEMINI_API_KEY_1=your_api_key_1
-GEMINI_API_KEY_2=your_api_key_2
-
-# İsteğe bağlı: bilgi tabanı tablo adı (varsayılan: knowledge_base)
-# KB_TABLE=knowledge_base
+PG_USER=postgres
+PG_PASSWORD=
+PG_DB=servis_masasi_db
+MSSQL_PASSWORD=
+JWT_SECRET=
+GEMINI_API_KEY_1=
+GEMINI_API_KEY_2=
+ADMIN_USERNAME=admin
+ADMIN_EMAIL=
+ADMIN_PASSWORD=
+KB_TABLE=knowledge_base
 ```
 
 JWT gizli anahtarı üretmek için:
@@ -440,8 +433,8 @@ python -c "import secrets; print(secrets.token_hex(32))"
 `init_mssql.sql` tekrar çalıştırılabilir (idempotent) yazılmıştır; tabloları yalnızca yoksa oluşturur ve mevcut veriye dokunmaz.
 
 ```bash
-docker cp init_mssql.sql mssql-server:/tmp/init_mssql.sql
-docker exec mssql-server /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "<sa_parolasi>" -C -i /tmp/init_mssql.sql
+docker cp init_mssql.sql servismasasi-mssql:/tmp/init_mssql.sql
+docker exec servismasasi-mssql /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "<sa_parolasi>" -C -i /tmp/init_mssql.sql
 ```
 
 Betik `Users`, `ChatSessions`, `ChatLogs` ve `Feedbacks` tablolarını oluşturur.
@@ -463,12 +456,12 @@ python import_3_csv.py
 > `import_3_csv.py` çalışırken `knowledge_base` tablosunu **TRUNCATE** eder; tekrar çalıştırmak mevcut verileri sıfırlar.
 > Script, `data/kaggle_tickets.csv`, `data/se_windows.csv` ve `data/se_oracle.csv` dosyalarını bekler. Dosya adları farklıysa yeniden adlandırın.
 
-### 7. Admin parolasını belirleyin
+### 7. Admin hesabı oluşturun
 
-`init_mssql.sql` içindeki `admin` kullanıcısı parola olmadan (`RESET_REQUIRED`) eklenir ve bcrypt ile doğrulanamaz. İlk girişten önce `reset_my_password.py` içindeki `KULLANICI_ADI` / `YENI_SIFRE` değerlerini düzenleyip çalıştırın (en az 8 karakter, büyük + küçük harf, rakam):
+`.env` içine `ADMIN_USERNAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` yazın (en az 8 karakter, büyük + küçük harf, rakam), sonra:
 
 ```bash
-python reset_my_password.py
+python create_admin.py
 ```
 
 ### 8. Uygulamayı başlatın
@@ -516,6 +509,10 @@ Akilli-Servis-Masasi-Chatbot/
 ├── rag_engine.py           # RAG çekirdeği: vektör arama, uzman modu, prompt, Gemini çağrıları
 ├── prompts.py              # Sistem promptları (genel / Windows Server / Oracle DB)
 ├── db_mssql.py             # MSSQL katmanı: kullanıcı, bcrypt, oturum, log, geri bildirim, metrikler
+├── docker-compose.yml      # PostgreSQL + MSSQL konteynerleri
+├── init_postgres.sql       # PostgreSQL / pgvector şeması
+├── create_admin.py         # .env'deki bilgilerle ilk admin hesabını oluşturur
+├── .env.example            # Ortam değişkenleri şablonu (parolasız)
 ├── auth_jwt.py             # Özgün JWT (HS256) üretimi ve doğrulaması
 ├── config.py               # .env üzerinden veritabanı ve JWT yapılandırması
 ├── import_3_csv.py         # CSV'leri embedding'e çevirip PostgreSQL'e yükler
